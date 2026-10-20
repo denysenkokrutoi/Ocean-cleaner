@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ocean Cleaner</title>
+<style>
+:root{box-sizing:border-box;color-scheme:dark;--bg:#06202e;--fg:#e9fbff;--accent:#2ee6c5;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;display:flex;align-items:center;justify-content:center;overflow:hidden;touch-action:manipulation;user-select:none;-webkit-user-select:none}
+#wrap{position:relative;width:min(100vw,177.78vh);aspect-ratio:16/9;max-height:100%}
+canvas{width:100%;height:100%;display:block;background:#0a5c9c}
+#hud{position:absolute;top:2.5%;left:2.5%;right:2.5%;display:flex;justify-content:space-between;align-items:flex-start;pointer-events:none;font-weight:700;font-size:clamp(12px,2.4vw,26px);text-shadow:0 1px 4px rgba(0,0,0,.7)}
+#barbox{width:36%;text-align:right}
+#bar{height:clamp(8px,1.6vw,16px);border-radius:99px;background:rgba(0,0,0,.45);overflow:hidden;margin-top:4px;border:1px solid rgba(255,255,255,.35)}
+#fill{height:100%;width:0;background:linear-gradient(90deg,#9c8f4a,#2ee6c5)}
+.ov{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:clamp(6px,1.6vw,16px);background:rgba(3,25,38,.74);text-align:center;padding:16px;font-size:clamp(12px,2.2vw,22px)}
+.ov h1,.ov h2{margin:0;font-size:clamp(24px,6vw,64px);color:var(--accent);letter-spacing:.02em}
+.ov p{margin:0;max-width:34em;line-height:1.4}
+button{font:inherit;font-weight:700;padding:.6em 1.8em;border:0;border-radius:99px;background:var(--accent);color:#04222b;cursor:pointer}
+button:hover{filter:brightness(1.1)}
+.fact{background:rgba(46,230,197,.14);border:1px solid var(--accent);border-radius:12px;padding:.6em 1em}
+#why{font-weight:700;color:#ffd166}
+.hide{display:none}
+</style>
+</head>
+<body>
+<div id="wrap">
+<canvas id="c"></canvas>
+<div id="hud"><div>Рахунок: <span id="sc">0</span><div style="font-size:.8em">Швидкість: <span id="sp">30</span></div></div><div id="barbox"><div>Ocean Health: <span id="hp">0</span>%</div><div id="bar"><div id="fill"></div></div></div></div>
+<div class="ov" id="start">
+<h1>Ocean Cleaner</h1>
+<p>Керуй робо-рибкою, збирай пластик і повертай океану життя. Клік, тап або Пробіл — пливти вгору.</p>
+<p>Уникай труб, нафтових плям і токсичних бочок.</p>
+<button id="go">Старт</button>
+</div>
+<div class="ov hide" id="over">
+<h2>Гру закінчено</h2>
+<p>Рахунок: <b id="fs">0</b> · Чистота океану: <b id="fh">0</b>%</p>
+<p id="msg"></p>
+<p id="why"></p>
+<p class="fact"><b>Чи знаєш ти?</b><br><span id="fact"></span></p>
+<button id="again">Перезапуск</button>
+</div>
+</div>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const W=960,H=540,FLOOR=H-34;cv.width=W;cv.height=H;
+const $=id=>document.getElementById(id);
+let state='start',score=0,oceanHealth=0,disp=0,speed=3,spawnIn=0,last=0,overAt=0,t=0,bgOff=0,wasFull=false;
+const fish={x:170,y:H/2,vy:0,w:56,h:30};
+let obs=[],trash=[],parts=[],texts=[];
+const R=Math.random;
+function rr(x,y,w,h,r){ctx.beginPath();ctx.roundRect(x,y,w,h,r)}
+
+/* ---------- background life ---------- */
+const cols=['#ff6f61','#ff9e5e','#c06cd8','#f06292','#ffd166'];
+const bgCorals=[],bgFish=[],bgTurtles=[],WC=16*72;
+for(let i=0;i<16;i++)bgCorals.push({x:i*72+R()*40,h:50+R()*80,c:cols[i%5],k:i%3});
+for(let i=0;i<10;i++)bgFish.push({x:R()*W,y:60+R()*(H-200),s:.7+R()*.8,v:.4+R()*.8,c:['#ffb703','#fb8500','#ff6b9d','#8ecae6'][i%4]});
+for(let i=0;i<3;i++)bgTurtles.push({x:i*340+100,y:110+i*110,v:.5+i*.15});
+
+function coral(x,y,h,c,k){
+  ctx.fillStyle=c;ctx.strokeStyle=c;ctx.lineCap='round';
+  if(k==0){ctx.lineWidth=8;for(let i=-1;i<=1;i++){ctx.beginPath();ctx.moveTo(x,y);ctx.quadraticCurveTo(x+i*16,y-h*.5,x+i*30,y-h*(i?.8:1));ctx.stroke();}}
+  else if(k==1){ctx.beginPath();ctx.moveTo(x,y);ctx.quadraticCurveTo(x-50,y-h*.6,x-30,y-h);ctx.lineTo(x+30,y-h);ctx.quadraticCurveTo(x+50,y-h*.6,x,y);ctx.fill();}
+  else{ctx.beginPath();ctx.arc(x,y,h*.45,Math.PI,0);ctx.fill();ctx.fillStyle='rgba(255,255,255,.25)';for(let i=-2;i<=2;i++){ctx.beginPath();ctx.arc(x+i*10,y-h*.25-(i%2)*6,3,0,7);ctx.fill();}}
+}
+function smallFish(x,y,s,c){
+  ctx.save();ctx.translate(x,y);ctx.scale(s,s);ctx.fillStyle=c;
+  ctx.beginPath();ctx.ellipse(0,0,18,9,0,0,7);ctx.fill();
+  ctx.beginPath();ctx.moveTo(14,0);ctx.lineTo(28,-9);ctx.lineTo(28,9);ctx.fill();
+  ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(-9,-2,3,0,7);ctx.fill();ctx.fillStyle='#000';ctx.beginPath();ctx.arc(-10,-2,1.5,0,7);ctx.fill();
+  ctx.restore();
+}
+function turtle(x,y,wag){
+  ctx.save();ctx.translate(x,y);
+  ctx.fillStyle='#7cb342';
+  ctx.beginPath();ctx.ellipse(-34,0,11,8,0,0,7);ctx.fill();
+  ctx.save();ctx.rotate(wag);ctx.beginPath();ctx.ellipse(-10,20,16,6,.5,0,7);ctx.fill();ctx.beginPath();ctx.ellipse(-10,-20,16,6,-.5,0,7);ctx.fill();ctx.restore();
+  ctx.beginPath();ctx.ellipse(22,10,10,5,.3,0,7);ctx.fill();
+  ctx.fillStyle='#2e7d32';ctx.beginPath();ctx.ellipse(0,0,30,20,0,0,7);ctx.fill();
+  ctx.strokeStyle='#1b5e20';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(-14,0);ctx.lineTo(14,0);ctx.moveTo(0,-18);ctx.lineTo(0,18);ctx.stroke();
+  ctx.restore();
+}
+function drawBio(a){
+  if(a<=.005)return;
+  ctx.globalAlpha=a;
+  ctx.fillStyle='rgba(255,255,255,.08)';
+  for(let i=0;i<5;i++){const x=i*220+40-(bgOff*.1%220);ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x+60,0);ctx.lineTo(x-60,FLOOR);ctx.lineTo(x-130,FLOOR);ctx.fill();}
+  for(const c of bgCorals){const px=((c.x-bgOff)%WC+WC)%WC-60;coral(px,FLOOR+4,c.h,c.c,c.k);}
+  for(const f of bgFish){smallFish(f.x,f.y,f.s,f.c);}
+  for(const tu of bgTurtles){turtle(tu.x,tu.y,Math.sin(t*.05)*.3);}
+  ctx.globalAlpha=1;
+}
+
+/* ---------- drawing ---------- */
+function drawWater(){
+  let g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,'#58c8f5');g.addColorStop(1,'#0b5fa5');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  drawBio(disp/100);
+  // sand
+  ctx.fillStyle='#d9c48a';ctx.fillRect(0,FLOOR,W,H-FLOOR);
+  ctx.fillStyle='rgba(0,0,0,.08)';for(let i=0;i<30;i++){ctx.beginPath();ctx.arc(((i*97-bgOff*1.2)%W+W)%W,FLOOR+8+(i%3)*8,3,0,7);ctx.fill();}
+  // murky layer, opacity = (100 - health)/100
+  const a=(100-disp)/100;
+  if(a>.003){
+    ctx.globalAlpha=a;
+    g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,'#7d8466');g.addColorStop(1,'#4a4130');
+    ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='rgba(40,35,25,.35)';
+    for(let i=0;i<24;i++){const x=((i*131-bgOff*.6)%W+W)%W,y=(i*57+Math.sin(t*.01+i)*20)%FLOOR;ctx.beginPath();ctx.arc(x,y,2+i%4,0,7);ctx.fill();}
+    ctx.globalAlpha=1;
+  }
+}
+function drawFish(){
+  const f=fish;ctx.save();ctx.translate(f.x,f.y);ctx.rotate(Math.max(-.5,Math.min(.8,f.vy/10)));
+  const wag=Math.sin(t*.35)*.35;
+  ctx.fillStyle='#7f8c99';
+  ctx.save();ctx.translate(-22,0);ctx.rotate(wag);ctx.beginPath();ctx.moveTo(4,0);ctx.lineTo(-16,-14);ctx.lineTo(-10,0);ctx.lineTo(-16,14);ctx.closePath();ctx.fill();ctx.restore();
+  ctx.beginPath();ctx.moveTo(-6,-12);ctx.lineTo(8,-22);ctx.lineTo(12,-11);ctx.closePath();ctx.fill();
+  let g=ctx.createLinearGradient(0,-15,0,15);g.addColorStop(0,'#f2f6fa');g.addColorStop(.5,'#aab6c2');g.addColorStop(1,'#5d6b78');
+  ctx.fillStyle=g;ctx.beginPath();ctx.ellipse(0,0,29,15,0,0,7);ctx.fill();
+  ctx.strokeStyle='#2ee6c5';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(-18,2);ctx.lineTo(14,2);ctx.stroke();
+  ctx.fillStyle='#4a5865';ctx.beginPath();ctx.moveTo(-4,6);ctx.lineTo(8,6);ctx.lineTo(2,16);ctx.closePath();ctx.fill();
+  ctx.shadowColor='#2ee6c5';ctx.shadowBlur=10;ctx.fillStyle='#2ee6c5';ctx.beginPath();ctx.arc(14,-4,5,0,7);ctx.fill();
+  ctx.shadowBlur=0;ctx.fillStyle='#06202e';ctx.beginPath();ctx.arc(15,-4,2,0,7);ctx.fill();
+  ctx.fillStyle='#2b3640';ctx.fillRect(25,0,5,3);
+  ctx.restore();
+}
+function drawTrash(o){
+  ctx.save();ctx.translate(o.x,o.y+Math.sin(t*.05+o.ph)*4);ctx.rotate(Math.sin(t*.03+o.ph)*.3);
+  ctx.shadowColor='rgba(255,255,255,.6)';ctx.shadowBlur=6;
+  if(o.k==0){
+    ctx.fillStyle='rgba(175,230,245,.85)';rr(-9,-16,18,32,6);ctx.fill();ctx.shadowBlur=0;
+    ctx.fillStyle='#e53935';ctx.fillRect(-5,-22,10,6);ctx.fillStyle='#43a047';ctx.fillRect(-9,-4,18,9);
+  }else if(o.k==1){
+    ctx.fillStyle='rgba(245,245,245,.9)';ctx.beginPath();ctx.moveTo(-14,-14);ctx.quadraticCurveTo(0,-8,14,-14);ctx.lineTo(16,10);ctx.quadraticCurveTo(0,20,-16,10);ctx.closePath();ctx.fill();ctx.shadowBlur=0;
+    ctx.strokeStyle='#cfd8dc';ctx.lineWidth=3;ctx.beginPath();ctx.arc(-7,-16,5,Math.PI,0);ctx.arc(7,-16,5,Math.PI,0);ctx.stroke();
+  }else{
+    ctx.fillStyle='rgba(255,255,255,.9)';ctx.beginPath();ctx.moveTo(-12,-14);ctx.lineTo(12,-14);ctx.lineTo(8,16);ctx.lineTo(-8,16);ctx.closePath();ctx.fill();ctx.shadowBlur=0;
+    ctx.fillStyle='#e53935';ctx.fillRect(-10,-4,20,7);ctx.fillStyle='#cfd8dc';ctx.fillRect(-13,-17,26,4);
+  }
+  ctx.restore();
+}
+function drawObs(o){
+  if(o.t=='pipeT'||o.t=='pipeB'){
+    let g=ctx.createLinearGradient(o.x,0,o.x+o.w,0);g.addColorStop(0,'#4b5a50');g.addColorStop(.45,'#8a9a8c');g.addColorStop(1,'#3c4840');
+    const top=o.t=='pipeT',fy=top?o.y+o.h-26:o.y,by=top?o.y:o.y+26,bh=o.h-26;
+    ctx.fillStyle=g;ctx.fillRect(o.x,by,o.w,bh);ctx.fillRect(o.x-6,fy,o.w+12,26);
+    ctx.fillStyle='rgba(120,70,30,.5)';ctx.fillRect(o.x+10,by+(top?20:10),14,bh*.5);ctx.fillRect(o.x+o.w-26,by+bh*.3,10,bh*.3);
+    ctx.fillStyle='#8bc34a';const dx=o.x+o.w/2,dy=top?o.y+o.h:o.y;
+    ctx.beginPath();ctx.arc(dx,dy+(top?6+Math.sin(t*.1)*3:-6),5,0,7);ctx.fill();
+    ctx.fillStyle='rgba(0,0,0,.25)';ctx.fillRect(o.x-6,top?fy+22:fy,o.w+12,4);
+  }else if(o.t=='barrel'){
+    ctx.save();ctx.translate(o.x+o.w/2,o.y+o.h/2);
+    ctx.fillStyle='#f2c200';rr(-22,-27,44,54,8);ctx.fill();
+    ctx.fillStyle='#8a6d00';ctx.fillRect(-22,-14,44,4);ctx.fillRect(-22,12,44,4);
+    ctx.fillStyle='#111';ctx.beginPath();ctx.moveTo(0,-9);ctx.lineTo(11,9);ctx.lineTo(-11,9);ctx.closePath();ctx.fill();
+    ctx.fillStyle='#f2c200';ctx.font='bold 14px sans-serif';ctx.textAlign='center';ctx.fillText('!',0,7);
+    ctx.fillStyle='#8bc34a';ctx.beginPath();ctx.arc(-14,28,4,0,7);ctx.fill();
+    ctx.restore();
+  }else{
+    ctx.save();ctx.translate(o.x+o.w/2,o.y+o.h/2);
+    ctx.fillStyle='#0d0d10';ctx.beginPath();ctx.ellipse(0,0,60,20+Math.sin(t*.05)*2,0,0,7);ctx.fill();
+    ctx.beginPath();ctx.ellipse(-30,8,26,14,0,0,7);ctx.ellipse(34,-6,24,14,0,0,7);ctx.fill();
+    let g=ctx.createLinearGradient(-50,0,50,0);g.addColorStop(0,'rgba(150,60,200,.5)');g.addColorStop(.5,'rgba(40,200,150,.5)');g.addColorStop(1,'rgba(230,160,40,.5)');
+    ctx.fillStyle=g;ctx.beginPath();ctx.ellipse(-6,-3,40,9,.1,0,7);ctx.fill();
+    ctx.restore();
+  }
+}
+
+/* ---------- game logic ---------- */
+function addTrash(x,y){trash.push({k:Math.floor(R()*3),x,y,w:30,h:38,ph:R()*6});}
+function spawn(){
+  const r=R(),X=W+80;
+  if(r<.6){
+    const gap=185,gy=130+R()*(FLOOR-260);
+    obs.push({t:'pipeT',x:X,y:0,w:78,h:gy-gap/2},{t:'pipeB',x:X,y:gy+gap/2,w:78,h:H-(gy+gap/2)});
+    addTrash(X+39,gy);
+  }else{
+    const y=110+R()*(FLOOR-220);
+    const o=r<.8?{t:'barrel',x:X,y:y-27,w:44,h:54,i:4}:{t:'oil',x:X,y:y-20,w:120,h:40,i:8};
+    obs.push(o);addTrash(X+o.w/2,y+(y>H/2?-115:115));
+  }
+  if(R()<.5)addTrash(X+155,70+R()*(FLOOR-140));
+}
+function hit(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
+function flap(){if(state==='play')fish.vy=-7.6;}
+function reset(){
+  score=0;oceanHealth=0;disp=0;speed=3;spawnIn=200;wasFull=false;
+  fish.y=H/2;fish.vy=0;obs=[];trash=[];parts=[];texts=[];
+  upd();
+}
+function startGame(){reset();state='play';$('start').classList.add('hide');$('over').classList.add('hide');fish.vy=-6;}
+let lastFact='';
+const WHY={pipe:'Ти врізався в промислову трубу.',barrel:'Ти врізався в токсичну бочку.',oil:'Ти потрапив у нафтову пляму.',floor:'Ти впав на дно, де лежить пластик.'};
+const FACTS={
+ pipe:['Із заводських труб у річки й моря можуть потрапляти хімікати. Вони отруюють воду, і рибам та коралам стає важко жити.','Деякі труби скидають у воду надлишок добрив. Від них швидко розростаються водорості, і рибам не вистачає кисню.','Щоб із труб лилася чиста вода, на заводах ставлять очисні фільтри.'],
+ barrel:['Хімікати з бочок отруюють воду. Рибки й молюски накопичують отруту в тілі, і вона може дістатися тих, хто їх їсть.','Небезпечні відходи не можна викидати в море. Їх треба здавати на спеціальну утилізацію.','Корали дуже чутливі до чистоти води. Від токсичних речовин вони можуть хворіти й гинути.'],
+ oil:['Нафтова плівка заважає світлу й кисню потрапляти у воду, тому рибам і водоростям важко жити.','Дельфіни й черепахи дихають повітрям, тому виринають на поверхню. Якщо вода залита нафтою, вони вдихають її отруйні пари.','Нафту з води збирають плавучими загородженнями (бонами) та спеціальними матеріалами, які вбирають її, але це дуже довго й дорого.'],
+ floor:['Пластикова пляшка розкладається в океані сотні років.','Черепахи часто плутають пластикові пакети з медузами й ковтають їх.','Пластик у воді розпадається на крихітні частинки, мікропластик. Він потрапляє навіть у риб.']
+};
+function die(cause){
+  if(state!=='play')return;
+  state='over';overAt=performance.now();
+  const k=String(cause).indexOf('pipe')==0?'pipe':cause,L=FACTS[k]||FACTS.floor;let i=Math.floor(R()*L.length);if(L[i]===lastFact)i=(i+1)%L.length;lastFact=L[i];
+  $('why').textContent=WHY[k]||WHY.floor;$('fact').textContent=L[i];
+  $('fs').textContent=score;$('fh').textContent=Math.round(oceanHealth);
+  $('msg').textContent=oceanHealth>=100?'Океан повністю чистий. Чудова робота!':oceanHealth>=50?'Гарний результат: океан оживає!':'Спробуй ще: кожна пляшка робить воду чистішою.';
+  $('over').classList.remove('hide');
+}
+function bubbles(x,y,n){for(let i=0;i<n;i++)parts.push({x,y,vx:(R()-.5)*3,vy:-R()*2-.5,r:2+R()*4,l:1});}
+function upd(){$('sp').textContent=Math.round(speed*10);$('sc').textContent=score;$('hp').textContent=Math.round(oceanHealth);$('fill').style.width=disp+'%';}
+
+function update(dt){
+  speed=Math.min(6,3+score/50);
+  fish.vy=Math.min(fish.vy+.42*dt,9);fish.y+=fish.vy*dt;
+  if(fish.y<fish.h/2){fish.y=fish.h/2;fish.vy=0;}
+  if(fish.y>FLOOR-fish.h/2){die('floor');return;}
+  spawnIn-=speed*dt;if(spawnIn<=0){spawn();spawnIn=310;}
+  const fb={x:fish.x-fish.w/2+8,y:fish.y-fish.h/2+6,w:fish.w-16,h:fish.h-12};
+  for(const o of obs){
+    o.x-=speed*dt;
+    const i=o.i||0;
+    if(hit(fb,{x:o.x+i,y:o.y+i,w:o.w-2*i,h:o.h-2*i})){die(o.t);return;}
+  }
+  for(let k=trash.length-1;k>=0;k--){
+    const o=trash[k];o.x-=speed*dt;
+    if(hit(fb,{x:o.x-o.w/2,y:o.y-o.h/2,w:o.w,h:o.h})){
+      trash.splice(k,1);score+=1;oceanHealth=Math.min(100,oceanHealth+2);
+      bubbles(o.x,o.y,10);texts.push({x:o.x,y:o.y,s:'+1',l:1,big:0});
+      if(oceanHealth>=100&&!wasFull){wasFull=true;texts.push({x:W/2,y:H/2,s:'Океан чистий!',l:2.2,big:1});}
+    }
+  }
+  obs=obs.filter(o=>o.x>-200);trash=trash.filter(o=>o.x>-60);
+  if(R()<.15)bubbles(fish.x-26,fish.y,1);
+}
+function ambient(dt,sp){
+  t+=dt;bgOff+=sp*.5*dt;disp+=(oceanHealth-disp)*Math.min(1,.04*dt);
+  for(const f of bgFish){f.x-=(f.v+sp*.3)*dt;if(f.x<-40){f.x=W+40;f.y=60+R()*(H-200);}}
+  for(const tu of bgTurtles){tu.x-=(tu.v+sp*.2)*dt;if(tu.x<-60){tu.x=W+60;tu.y=100+R()*(FLOOR-200);}}
+  for(const p of parts){p.x+=p.vx*dt;p.y+=p.vy*dt;p.l-=.02*dt;}
+  parts=parts.filter(p=>p.l>0);
+  for(const x of texts){x.y-=.8*dt;x.l-=.02*dt;}
+  texts=texts.filter(x=>x.l>0);
+}
+function render(){
+  drawWater();
+  trash.forEach(drawTrash);obs.forEach(drawObs);drawFish();
+  ctx.strokeStyle='rgba(255,255,255,.7)';ctx.lineWidth=1.5;
+  for(const p of parts){ctx.globalAlpha=Math.max(0,Math.min(1,p.l));ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,7);ctx.stroke();}
+  ctx.globalAlpha=1;ctx.textAlign='center';
+  for(const x of texts){ctx.globalAlpha=Math.max(0,Math.min(1,x.l));ctx.font=(x.big?'bold 44px':'bold 22px')+' system-ui,sans-serif';ctx.lineWidth=4;ctx.strokeStyle='rgba(0,0,0,.6)';ctx.strokeText(x.s,x.x,x.y);ctx.fillStyle=x.big?'#2ee6c5':'#fff';ctx.fillText(x.s,x.x,x.y);}
+  ctx.globalAlpha=1;
+}
+function loop(now){
+  const dt=Math.min((now-last)/16.667||1,2.5);last=now;
+  if(state==='play'){ambient(dt,speed);update(dt);}
+  else if(state==='start'){fish.y=H/2+Math.sin(now/400)*14;fish.vy=0;ambient(dt,1.5);}
+  else ambient(dt,0);
+  upd();render();requestAnimationFrame(loop);
+}
+
+/* ---------- input ---------- */
+cv.addEventListener('mousedown',e=>{e.preventDefault();flap();});
+cv.addEventListener('touchstart',e=>{e.preventDefault();flap();},{passive:false});
+addEventListener('keydown',e=>{
+  if(e.code!=='Space')return;e.preventDefault();if(e.repeat)return;
+  if(state==='play')flap();
+  else if(state==='start')startGame();
+  else if(performance.now()-overAt>500)startGame();
+});
+$('go').addEventListener('click',startGame);
+$('again').addEventListener('click',startGame);
+$('go').addEventListener('keydown',e=>{if(e.code==='Space')e.stopPropagation();});
+$('again').addEventListener('keydown',e=>{if(e.code==='Space')e.stopPropagation();});
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
